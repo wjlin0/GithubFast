@@ -362,62 +362,72 @@ func check(path string) {
 }
 
 func main() {
-	fmt.Println("开始运行....")
-	switch osVersion {
-	case "linux":
-		hostPath = "/etc/hosts"
-		PingBack = PingLinux
-		cmd = "sudo nscd restart"
-	case "windows":
-		hostPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
-		PingBack = Ping
-		cmd = "ipconfig /flushdns"
-	case "darwin":
-		hostPath = "/etc/hosts"
-		PingBack = PingLinux
-		cmd = "sudo killall -HUP mDNSResponder"
-	}
-	check(hostPath)
-	fmt.Println("-> 检查权限通过....")
-	getHost(hostPath)
-	deleteOldFile(hostPath)
-	fmt.Println("-> 删除昨日备份....")
-	client := &http.Client{}
-	var wg sync.WaitGroup
-	sleepTime := 1
-	for _, uri := range GITHUB_URLS {
-		wg.Add(1)
-		sleepTime += 1
-		go func(url string, sleepTime int) {
-			defer wg.Done()
-			attempts := 0
-			time.Sleep(time.Duration(sleepTime) * time.Second)
-			for attempts < 3 {
-				ip := getIP(client, url)
-				ipsMapMutex.Lock()
-				if ip != "" {
-					ipsMap[url] = ip
-					fmt.Printf("[Run] %s -> %s \n", url, ip)
+	var end bool
+	for end == false {
+		fmt.Println("开始运行....")
+		switch osVersion {
+		case "linux":
+			hostPath = "/etc/hosts"
+			PingBack = PingLinux
+			cmd = "sudo nscd restart"
+		case "windows":
+			hostPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
+			PingBack = Ping
+			cmd = "ipconfig /flushdns"
+		case "darwin":
+			hostPath = "/etc/hosts"
+			PingBack = PingLinux
+			cmd = "sudo killall -HUP mDNSResponder"
+		}
+		check(hostPath)
+		fmt.Println("-> 检查权限通过....")
+		getHost(hostPath)
+		deleteOldFile(hostPath)
+		fmt.Println("-> 删除昨日备份....")
+		client := &http.Client{}
+		var wg sync.WaitGroup
+		sleepTime := 1
+		for _, uri := range GITHUB_URLS {
+			wg.Add(1)
+			sleepTime += 1
+			go func(url string, sleepTime int) {
+				defer wg.Done()
+				attempts := 0
+				time.Sleep(time.Duration(sleepTime) * time.Second)
+				for attempts < 3 {
+					ip := getIP(client, url)
+					ipsMapMutex.Lock()
+					if ip != "" {
+						ipsMap[url] = ip
+						fmt.Printf("[Run] %s -> %s \n", url, ip)
+						ipsMapMutex.Unlock()
+						return
+					}
 					ipsMapMutex.Unlock()
-					return
+					attempts++
 				}
-				ipsMapMutex.Unlock()
-				attempts++
-			}
-			fmt.Printf("[Exit] Unable to fetch IP for %s after %d attempts.\n", url, attempts)
-		}(uri, sleepTime)
+				fmt.Printf("[Exit] Unable to fetch IP for %s after %d attempts.\n", url, attempts)
+			}(uri, sleepTime)
+		}
+		wg.Wait()
+		writeHost(hostPath, ipsMap)
+		var err error
+		switch osVersion {
+		case "linux":
+		default:
+			c := strings.Split(cmd, " ")
+			cmd := exec.Command(c[0], c[1:]...)
+			var out []byte
+			out, err = cmd.CombinedOutput()
+			fmt.Println(string(out))
+		}
+		if err != nil {
+			fmt.Printf("[Err]cmd.Run() failed with %s\n", err)
+		}
+		_, err = http.Get("https://github.com")
+		if err == nil {
+			end = true
+		}
 	}
-	wg.Wait()
-	writeHost(hostPath, ipsMap)
-	var err error
-	switch osVersion {
-	case "linux":
-	default:
-		c := strings.Split(cmd, " ")
-		cmd := exec.Command(c[0], c[1:]...)
-		err = cmd.Run()
-	}
-	if err != nil {
-		fmt.Printf("[Err]cmd.Run() failed with %s\n", err)
-	}
+
 }
