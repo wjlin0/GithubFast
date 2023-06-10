@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"gopkg.in/xmlpath.v2"
 	"io"
 	"math/rand"
 	"net"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -66,6 +66,7 @@ func Ping(ipList []string) string {
 
 		// 解析 ping 输出，提取延迟时间
 		outputStr := string(output)
+		fmt.Println(outputStr)
 		if strings.Contains(outputStr, "time=") {
 			latencyStr := strings.Split(outputStr, "time=")[1]
 			latencyStr = strings.Split(latencyStr, " ")[0]
@@ -92,10 +93,10 @@ func Ping(ipList []string) string {
 	}
 
 	// 随机返回一个 Ping 成功的 IP 地址
-	if len(ipList) > 0 {
-		randomIndex := rand.Intn(len(ipList))
-		return ipList[randomIndex]
-	}
+	//if len(ipList) > 0 {
+	//	randomIndex := rand.Intn(len(ipList))
+	//	return ipList[randomIndex]
+	//}
 
 	// 如果没有可用的 IP 地址，则返回空字符串
 	return ""
@@ -175,6 +176,7 @@ func getIP(session *http.Client, githubURL string) string {
 	url := fmt.Sprintf("https://www.ipaddress.com/site/%s", githubURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		fmt.Println("[Err]", err)
 		return ""
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
@@ -186,28 +188,35 @@ func getIP(session *http.Client, githubURL string) string {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
+		fmt.Println("[Err]", err)
 		return ""
 	}
 
-	pattern := `(?:[0-9]{1,3}\.){3}[0-9]{1,3}`
-	re := regexp.MustCompile(pattern)
-	ipList := re.FindAllString(string(body), -1)
-	//var TList []string
-	var Tlist string
-	for _, ip := range ipList {
-		if strings.Contains(Tlist, ip) {
-			continue
-		}
-		Tlist += ip + ","
+	// 使用XPath查找指定的元素路径
+	path := xmlpath.MustCompile("//*[@id=\"tabpanel-dns-a\"]/pre/a[1]")
+	if value, ok := path.String(root); ok {
+		// 打印找到的元素内容
+		return value
+	} else {
+		return ""
 	}
-	Tlist = strings.TrimRight(Tlist, ",")
-	bestIP := PingBack(strings.Split(Tlist, ","))
-	if bestIP != "" {
-		return bestIP
-	}
-	return ""
+	//body, _ := io.ReadAll(resp.Body)
+	//pattern := `(?:[0-9]{1,3}\.){3}[0-9]{1,3}`
+	//re := regexp.MustCompile(pattern)
+	//ipList := re.FindAllString(string(body), -1)
+	////var TList []string
+	//var Tlist string
+	//for _, ip := range ipList {
+	//	if strings.Contains(Tlist, ip) {
+	//		continue
+	//	}
+	//	Tlist += ip + ","
+	//}
+	//Tlist = strings.TrimRight(Tlist, ",")
+	//bestIP := PingBack(strings.Split(Tlist, ","))
+	//return bestIP
 }
 
 func copyFile(sourcePath, destinationPath string) error {
