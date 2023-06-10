@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"gopkg.in/xmlpath.v2"
 	"io"
 	"math/rand"
 	"net"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -66,6 +66,7 @@ func Ping(ipList []string) string {
 
 		// 解析 ping 输出，提取延迟时间
 		outputStr := string(output)
+		fmt.Println(outputStr)
 		if strings.Contains(outputStr, "time=") {
 			latencyStr := strings.Split(outputStr, "time=")[1]
 			latencyStr = strings.Split(latencyStr, " ")[0]
@@ -92,10 +93,10 @@ func Ping(ipList []string) string {
 	}
 
 	// 随机返回一个 Ping 成功的 IP 地址
-	if len(ipList) > 0 {
-		randomIndex := rand.Intn(len(ipList))
-		return ipList[randomIndex]
-	}
+	//if len(ipList) > 0 {
+	//	randomIndex := rand.Intn(len(ipList))
+	//	return ipList[randomIndex]
+	//}
 
 	// 如果没有可用的 IP 地址，则返回空字符串
 	return ""
@@ -163,11 +164,19 @@ func pingIP(ip string) (time.Duration, error) {
 	rtt := time.Since(start)
 	return rtt, nil
 }
-
+func stringInArray(str string, arr []string) bool {
+	for _, s := range arr {
+		if s == str {
+			return true
+		}
+	}
+	return false
+}
 func getIP(session *http.Client, githubURL string) string {
 	url := fmt.Sprintf("https://www.ipaddress.com/site/%s", githubURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		fmt.Println("[Err]", err)
 		return ""
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
@@ -179,28 +188,35 @@ func getIP(session *http.Client, githubURL string) string {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
+		fmt.Println("[Err]", err)
 		return ""
 	}
 
-	pattern := `(?:[0-9]{1,3}\.){3}[0-9]{1,3}`
-	re := regexp.MustCompile(pattern)
-	ipList := re.FindAllString(string(body), -1)
-	//var TList []string
-	var Tlist string
-	for _, ip := range ipList {
-		if strings.Contains(Tlist, ip) {
-			continue
-		}
-		Tlist += ip + ","
+	// 使用XPath查找指定的元素路径
+	path := xmlpath.MustCompile("//*[@id=\"tabpanel-dns-a\"]/pre/a[1]")
+	if value, ok := path.String(root); ok {
+		// 打印找到的元素内容
+		return value
+	} else {
+		return ""
 	}
-	Tlist = strings.TrimRight(Tlist, ",")
-	bestIP := PingBack(strings.Split(Tlist, ","))
-	if bestIP != "" {
-		return bestIP
-	}
-	return ""
+	//body, _ := io.ReadAll(resp.Body)
+	//pattern := `(?:[0-9]{1,3}\.){3}[0-9]{1,3}`
+	//re := regexp.MustCompile(pattern)
+	//ipList := re.FindAllString(string(body), -1)
+	////var TList []string
+	//var Tlist string
+	//for _, ip := range ipList {
+	//	if strings.Contains(Tlist, ip) {
+	//		continue
+	//	}
+	//	Tlist += ip + ","
+	//}
+	//Tlist = strings.TrimRight(Tlist, ",")
+	//bestIP := PingBack(strings.Split(Tlist, ","))
+	//return bestIP
 }
 
 func copyFile(sourcePath, destinationPath string) error {
@@ -290,11 +306,19 @@ func getHost(path string) {
 			continue
 		}
 		ipDomain := strings.Split(line, " ")
-		if len(ipDomain) == 4 && ipDomain[2] == "#" {
-			ipsMap[ipDomain[1]] = ipsMap[ipDomain[0]]
-		} else {
-			writeList = append(writeList, line)
+		found := false
+		for _, ip := range ipDomain {
+			if stringInArray(ip, GITHUB_URLS) {
+				found = true
+				break
+			}
 		}
+		if found {
+			continue
+		}
+
+		writeList = append(writeList, line)
+
 	}
 }
 
@@ -338,56 +362,72 @@ func check(path string) {
 }
 
 func main() {
-	fmt.Println("开始运行....")
-	switch osVersion {
-	case "linux":
-		hostPath = "/etc/hosts"
-		PingBack = PingLinux
-		cmd = "sudo nscd restart"
-	case "windows":
-		hostPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
-		PingBack = Ping
-		cmd = "ipconfig /flushdns"
-	case "darwin":
-		hostPath = "/etc/hosts"
-		PingBack = PingLinux
-		cmd = "sudo killall -HUP mDNSResponder"
+	var end bool
+	for end == false {
+		fmt.Println("开始运行....")
+		switch osVersion {
+		case "linux":
+			hostPath = "/etc/hosts"
+			PingBack = PingLinux
+			cmd = "sudo nscd restart"
+		case "windows":
+			hostPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
+			PingBack = Ping
+			cmd = "ipconfig /flushdns"
+		case "darwin":
+			hostPath = "/etc/hosts"
+			PingBack = PingLinux
+			cmd = "sudo killall -HUP mDNSResponder"
+		}
+		check(hostPath)
+		fmt.Println("-> 检查权限通过....")
+		getHost(hostPath)
+		deleteOldFile(hostPath)
+		fmt.Println("-> 删除昨日备份....")
+		client := &http.Client{}
+		var wg sync.WaitGroup
+		sleepTime := 1
+		for _, uri := range GITHUB_URLS {
+			wg.Add(1)
+			sleepTime += 1
+			go func(url string, sleepTime int) {
+				defer wg.Done()
+				attempts := 0
+				time.Sleep(time.Duration(sleepTime) * time.Second)
+				for attempts < 3 {
+					ip := getIP(client, url)
+					ipsMapMutex.Lock()
+					if ip != "" {
+						ipsMap[url] = ip
+						fmt.Printf("[Run] %s -> %s \n", url, ip)
+						ipsMapMutex.Unlock()
+						return
+					}
+					ipsMapMutex.Unlock()
+					attempts++
+				}
+				fmt.Printf("[Exit] Unable to fetch IP for %s after %d attempts.\n", url, attempts)
+			}(uri, sleepTime)
+		}
+		wg.Wait()
+		writeHost(hostPath, ipsMap)
+		var err error
+		switch osVersion {
+		case "linux":
+		default:
+			c := strings.Split(cmd, " ")
+			cmd := exec.Command(c[0], c[1:]...)
+			var out []byte
+			out, err = cmd.CombinedOutput()
+			fmt.Println(string(out))
+		}
+		if err != nil {
+			fmt.Printf("[Err]cmd.Run() failed with %s\n", err)
+		}
+		_, err = http.Get("https://github.com")
+		if err == nil {
+			end = true
+		}
 	}
-	check(hostPath)
-	fmt.Println("-> 检查权限通过....")
-	getHost(hostPath)
-	deleteOldFile(hostPath)
-	fmt.Println("-> 删除昨日备份....")
-	client := &http.Client{}
-	var wg sync.WaitGroup
-	sleepTime := 1
-	for _, uri := range GITHUB_URLS {
-		wg.Add(1)
-		sleepTime += 1
-		go func(url string, sleepTime int) {
-			defer wg.Done()
-			time.Sleep(time.Duration(sleepTime) * time.Second)
-			ip := getIP(client, url)
-			ipsMapMutex.Lock()
-			if ip != "" {
-				ipsMap[url] = ip
-				fmt.Printf("[Run] %s -> %s \n", url, ip)
-			}
 
-			ipsMapMutex.Unlock()
-		}(uri, sleepTime)
-	}
-	wg.Wait()
-	writeHost(hostPath, ipsMap)
-	var err error
-	switch osVersion {
-	case "linux":
-	default:
-		c := strings.Split(cmd, " ")
-		cmd := exec.Command(c[0], c[1:]...)
-		err = cmd.Run()
-	}
-	if err != nil {
-		fmt.Printf("[Err]cmd.Run() failed with %s\n", err)
-	}
 }
