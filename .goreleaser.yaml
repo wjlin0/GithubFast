@@ -1,0 +1,46 @@
+# This is an example .goreleaser.yml file with some sensible defaults.
+# Make sure to check the documentation at https://goreleaser.com
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod tidy
+    # you may remove this if you don't need go generate
+#    - go generate ./...
+builds:
+  - main: .
+    binary: GithubFast
+    id: GithubFast
+
+    env:
+      - CGO_ENABLED=0
+
+    goos: [windows,linux,darwin]
+    goarch: [amd64,386,arm,arm64]
+    ignore:
+      - goos: darwin
+        goarch: 386
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: arm64
+
+    flags:
+      - -trimpath
+
+archives:
+  - format: zip
+    id: GithubFast
+    builds: [GithubFast]
+    files:
+      - README.md
+
+checksum:
+  algorithm: sha256
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
