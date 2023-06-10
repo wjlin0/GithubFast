@@ -163,7 +163,14 @@ func pingIP(ip string) (time.Duration, error) {
 	rtt := time.Since(start)
 	return rtt, nil
 }
-
+func stringInArray(str string, arr []string) bool {
+	for _, s := range arr {
+		if s == str {
+			return true
+		}
+	}
+	return false
+}
 func getIP(session *http.Client, githubURL string) string {
 	url := fmt.Sprintf("https://www.ipaddress.com/site/%s", githubURL)
 	req, err := http.NewRequest("GET", url, nil)
@@ -290,11 +297,19 @@ func getHost(path string) {
 			continue
 		}
 		ipDomain := strings.Split(line, " ")
-		if len(ipDomain) == 4 && ipDomain[2] == "#" {
-			ipsMap[ipDomain[1]] = ipsMap[ipDomain[0]]
-		} else {
-			writeList = append(writeList, line)
+		found := false
+		for _, ip := range ipDomain {
+			if stringInArray(ip, GITHUB_URLS) {
+				found = true
+				break
+			}
 		}
+		if found {
+			continue
+		}
+
+		writeList = append(writeList, line)
+
 	}
 }
 
@@ -366,15 +381,21 @@ func main() {
 		sleepTime += 1
 		go func(url string, sleepTime int) {
 			defer wg.Done()
+			attempts := 0
 			time.Sleep(time.Duration(sleepTime) * time.Second)
-			ip := getIP(client, url)
-			ipsMapMutex.Lock()
-			if ip != "" {
-				ipsMap[url] = ip
-				fmt.Printf("[Run] %s -> %s \n", url, ip)
+			for attempts < 3 {
+				ip := getIP(client, url)
+				ipsMapMutex.Lock()
+				if ip != "" {
+					ipsMap[url] = ip
+					fmt.Printf("[Run] %s -> %s \n", url, ip)
+					ipsMapMutex.Unlock()
+					return
+				}
+				ipsMapMutex.Unlock()
+				attempts++
 			}
-
-			ipsMapMutex.Unlock()
+			fmt.Printf("[Exit] Unable to fetch IP for %s after %d attempts.\n", url, attempts)
 		}(uri, sleepTime)
 	}
 	wg.Wait()
